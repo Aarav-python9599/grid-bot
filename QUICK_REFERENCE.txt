@@ -1,0 +1,154 @@
+============================================================================
+WALLET FEATURE - QUICK REFERENCE CARD
+============================================================================
+
+THREE FILES TO CHANGE:
+  1. grid.mjs       ← Trading logic
+  2. index.html     ← Dashboard display
+  3. state.json     ← Initial state (or auto-migrated from old)
+
+============================================================================
+GRID.MJS CHANGES (3 locations)
+============================================================================
+
+LOCATION 1: blankState() function (line 36)
+  OLD:  return { v: 1, kind: 'grid', cash: cfg.START, startBalance: cfg.START, 
+                 grid: null, ...
+  NEW:  return { v: 1, kind: 'grid', cash: cfg.START, startBalance: cfg.START, 
+                 wallet: 0, grid: null, ...
+  ACTION: Add "wallet: 0" after startBalance
+
+LOCATION 2: ensureFields() function (line 47)
+  OLD:  const d = { stops: 0, stopSold: 0, stopLoss: 0, restarts: 0, 
+                    stopPrice: null, lastStop: null };
+  NEW:  const d = { stops: 0, stopSold: 0, stopLoss: 0, restarts: 0, 
+                    stopPrice: null, lastStop: null, wallet: 0 };
+  ACTION: Add ", wallet: 0" at end of object
+
+LOCATION 3: sellSlot() function (lines 83-88)
+  OLD:
+    function sellSlot(st, i, tMs, cfg) {
+      const g = st.grid, U = g.levels[i + 1], s = st.slots[i];
+      const gross = s.qty * U, net = gross - gross * cfg.FEE, pnl = net - s.cost;
+      st.cash += net; st.realized += pnl; st.rounds++; st.slots[i] = null;
+      pushTrade(st, { time: new Date(tMs).toISOString(), side: 'SELL', 
+                      slot: i, price: r2(U), usd: r2(net), pnl: r2(pnl) });
+    }
+
+  NEW:
+    function sellSlot(st, i, tMs, cfg) {
+      const g = st.grid, U = g.levels[i + 1], s = st.slots[i];
+      const gross = s.qty * U, net = gross - gross * cfg.FEE, pnl = net - s.cost;
+      if (pnl > 0) {
+        st.wallet += pnl;
+        st.cash = cfg.START;
+      } else {
+        st.cash += net;
+      }
+      st.realized += pnl; st.rounds++; st.slots[i] = null;
+      pushTrade(st, { time: new Date(tMs).toISOString(), side: 'SELL', 
+                      slot: i, price: r2(U), usd: r2(net), pnl: r2(pnl) });
+    }
+
+  ACTION: Replace "st.cash += net;" with profit/loss conditional
+
+============================================================================
+INDEX.HTML CHANGES (2 locations)
+============================================================================
+
+LOCATION 1: HTML markup (lines 19-21)
+  OLD:
+    <h1>SNIPER <span style="color:var(--m);font-size:14px">// grid</span></h1>
+    <div class="s" id="s">loading...</div>
+    <div class="row">
+      <div class="c"><b>Equity</b><span id="eq">-</span></div>
+      <div class="c"><b>Cash</b><span id="cash">-</span></div>
+      <div class="c"><b>P&amp;L</b><span id="pnl">-</span></div>
+    </div>
+
+  NEW:
+    <h1>SNIPER <span style="color:var(--m);font-size:14px">// grid</span></h1>
+    <div class="s" id="s">loading...</div>
+    <div class="row">
+      <div class="c"><b>Equity</b><span id="eq">-</span></div>
+      <div class="c"><b>Trade Cash</b><span id="cash">-</span></div>
+      <div class="c"><b>Wallet</b><span id="wallet">-</span></div>
+    </div>
+    <div class="row">
+      <div class="c" style="grid-column:1/4"><b>Total P&amp;L</b><span id="pnl">-</span></div>
+    </div>
+
+  ACTION: 
+    - Change "Cash" to "Trade Cash"
+    - Add new <div> for Wallet
+    - Add new row for P&L (spans all columns)
+
+LOCATION 2: render() function (lines 40-42)
+  OLD:
+    const eq=s.cash+held*px, pnl=eq-s.startBalance, unreal=held*px-cost;
+    $('eq').textContent=f(eq);$('cash').textContent=f(s.cash);
+    const pe=$('pnl');...
+
+  NEW:
+    const wallet=s.wallet||0;
+    const eq=s.cash+held*px+wallet, pnl=eq-s.startBalance, unreal=held*px-cost;
+    $('eq').textContent=f(eq);$('cash').textContent=f(s.cash);
+    $('wallet').textContent=f(wallet);
+    const pe=$('pnl');...
+
+  ACTION:
+    - Add "const wallet=s.wallet||0;" before equity calc
+    - Add "+wallet" to equity calculation
+    - Add "$('wallet').textContent=f(wallet);" to display it
+
+============================================================================
+STATE.JSON CHANGE (1 location)
+============================================================================
+
+  OLD:
+    {
+     "v": 1,
+     "kind": "grid",
+     "cash": 10000,
+     "startBalance": 10000,
+     "grid": null,
+
+  NEW:
+    {
+     "v": 1,
+     "kind": "grid",
+     "cash": 10000,
+     "startBalance": 10000,
+     "wallet": 0,
+     "grid": null,
+
+  ACTION: Add "wallet": 0, after startBalance
+
+============================================================================
+EXPECTED RESULTS
+============================================================================
+
+AFTER FIRST PROFITABLE TRADE:
+  Dashboard shows: Trade Cash=$10,000, Wallet=$[profit amount]
+  Expected: Wallet increased, Cash reset to 10,000
+
+AFTER FIRST LOSS:
+  Dashboard shows: Trade Cash=$[reduced], Wallet=$[unchanged]
+  Expected: Wallet unchanged, Cash decreased
+
+AFTER 1 HOUR:
+  Wallet monotonically increases (never decreases)
+  Equity = Cash + Wallet + Held*Price
+
+============================================================================
+ROLLBACK
+============================================================================
+
+If needed to revert:
+  1. Restore old grid.mjs from backup
+  2. Restore old index.html from backup
+  3. Keep state.json as-is (wallet field doesn't hurt)
+  4. Bot works exactly as before
+  5. Wallet field in state.json is simply ignored
+
+============================================================================
